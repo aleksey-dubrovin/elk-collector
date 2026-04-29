@@ -1,3 +1,2 @@
-cluster.name: "docker-cluster"
+cluster.name: "elk-cluster"
 network.host: 0.0.0.0
-node.attr.temperature: hot

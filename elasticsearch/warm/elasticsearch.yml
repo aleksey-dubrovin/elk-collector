@@ -1,4 +1,3 @@
-cluster.name: "docker-cluster"
+cluster.name: "elk-cluster"
 network.host: 0.0.0.0
-discovery.seed_hosts: elasticsearch-hot
-node.attr.temperature: warm
+discovery.seed_hosts: es-hot

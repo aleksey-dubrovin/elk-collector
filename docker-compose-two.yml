@@ -1,80 +1,103 @@
+version: "2.2"
+
 services:
-  elasticsearch-hot:
+  es-hot:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    container_name: elasticsearch-hot
+    container_name: es-hot
     environment:
-      - node.name=elasticsearch-hot
-      - cluster.name=docker-cluster
-      - discovery.type=single-node
+      - node.name=es-hot
+      - cluster.name=elk-cluster
+      - cluster.initial_master_nodes=es-hot,es-warm
+      - discovery.seed_hosts=es-warm
       - bootstrap.memory_lock=true
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - xpack.security.enabled=false
-      - node.attr.temperature=hot
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+      - xpack.security.enrollment.enabled=false
     volumes:
-      - ./elasticsearch/hot/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - hot-data:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
-    networks:
-      - elk
-
-  elasticsearch-warm:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    container_name: elasticsearch-warm
-    environment:
-      - node.name=elasticsearch-warm
-      - cluster.name=docker-cluster
-      - discovery.seed_hosts=elasticsearch-hot
-      - cluster.initial_master_nodes=elasticsearch-hot
-      - bootstrap.memory_lock=true
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - xpack.security.enabled=false
-      - node.attr.temperature=warm
     ulimits:
       memlock:
         soft: -1
         hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
+    networks:
+      - elk
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  es-warm:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: es-warm
+    environment:
+      - node.name=es-warm
+      - cluster.name=elk-cluster
+      - cluster.initial_master_nodes=es-hot,es-warm
+      - discovery.seed_hosts=es-hot
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
     volumes:
-      - ./elasticsearch/warm/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - warm-data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
     networks:
       - elk
     depends_on:
-      - elasticsearch-hot
+      - es-hot
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.0
     container_name: logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
     volumes:
-      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
     ports:
-      - "5044:5044"
-      - "5000:5000"
+      - "5046:5046"
     networks:
       - elk
     depends_on:
-      - elasticsearch-hot
+      es-hot:
+        condition: service_healthy
+      es-warm:
+        condition: service_healthy
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.0
     container_name: kibana
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch-hot:9200
+      - ELASTICSEARCH_HOSTS=http://es-hot:9200
     ports:
       - "5601:5601"
     networks:
       - elk
     depends_on:
-      - elasticsearch-hot
+      es-hot:
+        condition: service_healthy
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     container_name: filebeat
     user: root
+    command: filebeat -e -strict.perms=false
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -88,13 +111,11 @@ services:
     image: python:3.9-alpine
     container_name: log-generator
     volumes:
-      - ./pinger/:/opt/:Z
+      - ./pinger/run.py:/opt/run.py:ro
     working_dir: /opt
     command: python3 /opt/run.py
     networks:
       - elk
-    depends_on:
-      - logstash
 
 volumes:
   hot-data:
